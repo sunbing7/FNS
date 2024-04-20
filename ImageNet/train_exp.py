@@ -752,6 +752,12 @@ def main_worker(gpu, ngpus_per_node, args):
         num_workers=args.workers, pin_memory=True)
 
     if args.evaluate:
+        save_checkpoint({
+            'epoch': 1,
+            'state_dict': model.state_dict(),
+            'best_acc1': best_acc1,
+            'optimizer': optimizer.state_dict(),
+        }, True)
         validate(val_loader, model, criterion, args)
         return
 
