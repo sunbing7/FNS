@@ -433,13 +433,13 @@ def evaluate_clean():
 if __name__ == '__main__':
     lr = 1.0
     evaluate_clean()
-    '''
+
     uap_fn = os.path.join(args.uap_path, 'uap_' + str(args.target) + '.npy')
     uap = np.load(uap_fn)
     tuap = torch.from_numpy(uap)
     tuap = tuap.cuda()
     evaluate_uap(tuap)
-    '''
+
     '''
     patch, _, _ = InitPatchB([1, 3, args.im_size, args.im_size], args.p_size)
     for i in range(args.epoch):
