@@ -30,3 +30,28 @@ python patchattack_gaussian_ours.py --clp 1.25 --dr 2.0
 
 #dr = 1.0 is CFN
 python patchattack_exp_ours.py --clp 1.2 --dr 1.0
+
+
+#vgg19
+#fns-g
+#python train_gaussian_ours.py /root/autodl-tmp/sunbing/workspace/uap/data/imagenet_sga/ --model_type=3 --clp=1.13 --dr=2.0 --evaluate
+#cfn
+#python train_exp.py /root/autodl-tmp/sunbing/workspace/uap/data/imagenet_sga/ --clp 1.1 --dr 1.0 --model 3 --evaluate
+
+for TARGET_CLASS in T_CLASS in {150,214,39,527,65,639,771,412}
+do
+    echo "Analyzing target class:" $TARGET_CLASS
+    python patchattack_gaussian_ours.py --clp 1.13 --dr 2.0 --model 3 --data=/root/autodl-tmp/sunbing/workspace/uap/data/imagenet/validation/ --uap_path=/root/autodl-tmp/sunbing/workspace/uap/my_result/FNS/ImageNet/uap/ --target=$TARGET_CLASS
+done
+
+#python patchattack_gaussian_ours.py --clp 1.13 --dr 2.0 --model 3 --data=/root/autodl-tmp/sunbing/workspace/uap/data/imagenet/validation/ --uap_path=/root/autodl-tmp/sunbing/workspace/uap/my_result/uap_virtual_data.pytorch/uap/imagenet_imagenet_vgg19_123 --target=150
+#python patchattack_exp_ours.py --clp 1.1 --dr 1.0 --model 3 --data=/root/autodl-tmp/sunbing/workspace/uap/data/imagenet/validation/ --uap_path=/root/autodl-tmp/sunbing/workspace/uap/my_result/uap_virtual_data.pytorch/uap/imagenet_imagenet_vgg19_123 --target=150
+
+
+#resnet50
+python patchattack_gaussian_ours.py --clp 1.0 --dr 2.0 --model 0 --data=/root/autodl-tmp/sunbing/workspace/uap/data/imagenet/validation/ --uap_path=/root/autodl-tmp/sunbing/workspace/uap/my_result/uap_virtual_data.pytorch/uap/imagenet_imagenet_resnet50_123 --target=755
+python patchattack_exp_ours.py --clp 1.1 --dr 1.0 --model 0 --data=/root/autodl-tmp/sunbing/workspace/uap/data/imagenet/validation/ --uap_path=/root/autodl-tmp/sunbing/workspace/uap/my_result/uap_virtual_data.pytorch/uap/imagenet_imagenet_resnet50_123 --target=755
+
+#googlenet {573,807,541,240,475,753,762,505}
+python patchattack_gaussian_ours.py --clp 1.0 --dr 2.0 --model 4 --data=/root/autodl-tmp/sunbing/workspace/uap/data/imagenet/validation/ --uap_path=/root/autodl-tmp/sunbing/workspace/uap/my_result/uap_virtual_data.pytorch/uap/imagenet_imagenet_googlenet_123 --target=573
+python patchattack_exp_ours.py --clp 1.1 --dr 1.0 --model 4 --data=/root/autodl-tmp/sunbing/workspace/uap/data/imagenet/validation/ --uap_path=/root/autodl-tmp/sunbing/workspace/uap/my_result/uap_virtual_data.pytorch/uap/imagenet_imagenet_googlenet_123 --target=573

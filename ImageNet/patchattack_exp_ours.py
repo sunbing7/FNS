@@ -27,7 +27,7 @@ parser.add_argument('--p_size', type=float, default=0.05, help='patch size. E.g.
 parser.add_argument('--im_size', type=int, default=224, help='the height / width of the input image to network')
 parser.add_argument('--step', type=float, default=2 / 255, help='patch update step')
 parser.add_argument('--data', default='ImageNet', help='folder of images to attack')
-parser.add_argument('--save', default='patches_robust_gaussian', help='folder to output images and model checkpoints')
+parser.add_argument('--save', default='patches_robust_exp', help='folder to output images and model checkpoints')
 parser.add_argument('--seed', type=int, default=0, help='random seed')
 parser.add_argument('--clp', type=float, default=1.0, help='clamp ratio')
 parser.add_argument('--advp', type=int, default=0, help='if using the AdvPatch attack')
@@ -57,13 +57,12 @@ class ResNet50(nn.Module):
             self.resnet = torchvision.models.resnet50(pretrained=True)
         else:
             self.resnet = torchvision.models.resnet50()
-            sd0 = torch.load('resnet50_gaussian_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))['state_dict']
+            sd0 = torch.load('resnet50_exp_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))['state_dict']
             sd = {}
             for k, v in sd0.items():
                 if k[0:len('module.resnet.')] == 'module.resnet.':
                     sd[k[len('module.resnet.'):]] = v
             self.resnet.load_state_dict(sd, strict=True)
-
 
     def register_hooks(self):
         def forward_hook_layer1(module, input, output):
@@ -88,7 +87,7 @@ class ResNet50(nn.Module):
         x = x / torch.clamp_min(norm, min=1e-7)
         thre = torch.mean(torch.mean(a * norm, dim=2, keepdim=True), dim=3, keepdim=True)
         mask = (norm > thre).float()
-        normd = thre * torch.exp(-1 / thre / thre * (norm - thre) * (norm - thre) * math.log(dr))
+        normd = thre * torch.exp(-1 / thre * (norm - thre) * math.log(dr))
         norm = norm * (1 - mask) + normd * mask
         x = x * norm
         return x
@@ -178,7 +177,7 @@ class Vgg19(nn.Module):
         thre = torch.mean(torch.mean(a * norm, dim=2, keepdim=True), dim=3, keepdim=True)
         x = x / torch.clamp_min(norm, min=1e-7)
         mask = (norm > thre).float()
-        normd = thre * torch.exp(-1 / thre / thre * (norm - thre) * (norm - thre) * math.log(dr))
+        normd = thre * torch.exp(-1 / thre * (norm - thre) * math.log(dr))
         norm = norm * (1 - mask) + normd * mask
         x = x * norm
         return x
@@ -238,7 +237,7 @@ class GoogleNet(nn.Module):
         thre = torch.mean(torch.mean(a * norm, dim=2, keepdim=True), dim=3, keepdim=True)
         x = x / torch.clamp_min(norm, min=1e-7)
         mask = (norm > thre).float()
-        normd = thre * torch.exp(-1 / thre / thre * (norm - thre) * (norm - thre) * math.log(dr))
+        normd = thre * torch.exp(-1 / thre * (norm - thre) * math.log(dr))
         norm = norm * (1 - mask) + normd * mask
         x = x * norm
         return x
@@ -387,7 +386,7 @@ class Inception(nn.Module):
             self.incep = torchvision.models.inception_v3(pretrained=True, aux_logits=False)
         else:
             self.incep = torchvision.models.inception_v3(pretrained=True, aux_logits=False)
-            sd0 = torch.load('incep_gaussian_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))['state_dict']
+            sd0 = torch.load('incep_exp_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))['state_dict']
             sd = {}
             for k, v in sd0.items():
                 if k[0:len('module.incep.')] == 'module.incep.':
@@ -399,7 +398,7 @@ class Inception(nn.Module):
         thre = torch.mean(torch.mean(a * norm, dim=2, keepdim=True), dim=3, keepdim=True)
         x = x / torch.clamp_min(norm, min=1e-7)
         mask = (norm > thre).float()
-        normd = thre * torch.exp(-1 / thre / thre * (norm - thre) * (norm - thre) * math.log(dr))
+        normd = thre * torch.exp(-1 / thre * (norm - thre) * math.log(dr))
         norm = norm * (1 - mask) + normd * mask
         x = x * norm
         return x
@@ -527,10 +526,10 @@ class Mobile(nn.Module):
             3)
 
         if args.nonrob:
-            self.mobile = mobilenet_v2(pretrained=True, clamp=args.clp, dr=args.dr, gaussian=True)
+            self.mobile = mobilenet_v2(pretrained=True, clamp=args.clp, dr=args.dr, gaussian=False)
         else:
-            self.mobile = mobilenet_v2(clamp=args.clp, dr=args.dr, gaussian=True)
-            sd0 = torch.load('mobile_gaussian_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))['state_dict']
+            self.mobile = mobilenet_v2(clamp=args.clp, dr=args.dr, gaussian=False)
+            sd0 = torch.load('mobile_exp_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))['state_dict']
             sd = {}
             for k, v in sd0.items():
                 if k[0:len('module.mobile.')] == 'module.mobile.':
@@ -563,26 +562,6 @@ class Mobile(nn.Module):
         return x
 
 
-def fix_labels(test_set):
-    val_dict = {}
-    groudtruth = os.path.join(args.data, 'classes.txt')
-
-    i = 0
-    with open(groudtruth) as file:
-        for line in file:
-            (key, class_name) = line.split(':')
-            val_dict[key] = i
-            i = i + 1
-
-    new_data_samples = []
-    for i, j in enumerate(test_set.samples):
-        class_id = test_set.samples[i][0].split('/')[-1].split('.')[0].split('_')[-1]
-        org_label = val_dict[class_id]
-        new_data_samples.append((test_set.samples[i][0], org_label))
-
-    test_set.samples = new_data_samples
-    return test_set
-
 
 if not os.path.exists(args.save + '/' + str(args.target)):
     os.makedirs(args.save + '/' + str(args.target))
@@ -604,6 +583,27 @@ elif args.model == 4:
 
 if args.cuda:
     net.cuda()
+
+
+def fix_labels(test_set):
+    val_dict = {}
+    groudtruth = os.path.join(args.data, 'classes.txt')
+
+    i = 0
+    with open(groudtruth) as file:
+        for line in file:
+            (key, class_name) = line.split(':')
+            val_dict[key] = i
+            i = i + 1
+
+    new_data_samples = []
+    for i, j in enumerate(test_set.samples):
+        class_id = test_set.samples[i][0].split('/')[-1].split('.')[0].split('_')[-1]
+        org_label = val_dict[class_id]
+        new_data_samples.append((test_set.samples[i][0], org_label))
+
+    test_set.samples = new_data_samples
+    return test_set
 
 im_size = 224
 if args.model == 1:
@@ -634,6 +634,33 @@ test_loader = torch.utils.data.DataLoader(test_data,
                                           shuffle=False,
                                           num_workers=2,
                                           pin_memory=True)
+'''
+normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+idx = np.arange(50)
+training_idx = np.array([])
+for i in range(1):
+    training_idx = np.append(training_idx, [idx[i * 50:i * 50 + 10]])
+training_idx = training_idx.astype(np.int32)
+
+train_loader = torch.utils.data.DataLoader(
+    dset.ImageFolder(args.data, transforms.Compose([
+        transforms.Resize(round(args.im_size * 1.050)),
+        transforms.CenterCrop(args.im_size),
+        transforms.ToTensor(),
+    ])),
+    batch_size=args.bs, shuffle=False, sampler=None,
+    num_workers=2, pin_memory=True)
+
+test_loader = torch.utils.data.DataLoader(
+    dset.ImageFolder(args.data, transforms.Compose([
+        transforms.Resize(round(args.im_size * 1.000)),
+        transforms.CenterCrop(args.im_size),
+        transforms.ToTensor(),
+    ])),
+    batch_size=args.bs, shuffle=False, sampler=None,
+    num_workers=2, pin_memory=True)
+'''
 
 
 # Single patch-------------------------------------------------------------------
@@ -650,6 +677,7 @@ def InitPatch(im_size, p_size):
     picp_bgr = cv2.resize(pic, (side, side))
     picp = cv2.transpose(picp_bgr[:, :, ::-1])
     # generate randomly------------------------------------------------
+    # noise[:,:, rx:rx+side, ry:ry+side] = np.random.randint(0,255,[b,c,side,side])/255.
     noise[:, :, rx:rx + side, ry:ry + side] = np.transpose(picp) / 255
     noise = noise.astype(np.float32)
     noise = torch.from_numpy(noise)
@@ -786,6 +814,7 @@ def attack(epoch, patch, rxy=None):
             noise, mask = get_noise(patch, data.shape, rx, ry)
             adv = torch.mul(data, mask) + torch.mul(noise, 1 - mask)
             feat = net.features(adv)
+
             adv_out = net(adv)
 
             if args.advp == 1:
@@ -807,6 +836,7 @@ def attack(epoch, patch, rxy=None):
         pre = torch.argmax(adv_out, dim=1)
         succ += (pre == args.target).type(torch.float32).sum()
         accu += (pre == labels).type(torch.float32).sum()
+
     if 1:
         vutils.save_image(noise,
                           args.save + '/' + str(args.target) + '/' + str(epoch) + '_rob{}_noise.png'.format(
@@ -820,29 +850,8 @@ def attack(epoch, patch, rxy=None):
                           args.save + '/' + str(args.target) + '/' + str(epoch) + '_rob{}_mask.png'.format(
                               args.nonrob),
                           normalize=False)
-
     evaluate(epoch, patch)
     return patch
-
-def evaluate(epoch, patch, rxy=None):
-    net.eval()
-    total = 0
-    accu = 0.
-    succ = 0.
-    for batch_idx, (data, labels) in enumerate(train_loader):
-        if args.cuda:
-            data, labels = data.cuda(), labels.cuda()
-        rx, ry = InheritB(data.shape, patch, rxy=rxy)
-        total += data.shape[0]
-        for count in range(1):
-            patch.requires_grad = False
-            noise, mask = get_noise(patch, data.shape, rx, ry)
-            adv = torch.mul(data, mask) + torch.mul(noise, 1 - mask)
-            adv_out = F.softmax(net(adv), dim=1)
-        pre = torch.argmax(adv_out, dim=1)
-        succ += (pre == args.target).type(torch.float32).sum()
-        accu += (pre == labels).type(torch.float32).sum()
-    print('Epoch:{:3d}, Classify Accuracy:{:.2f}, Target Success:{:.2f}'.format(epoch, accu / total * 100, succ / total * 100))
 
 
 def evaluate_uap(patch):
@@ -863,6 +872,29 @@ def evaluate_uap(patch):
         succ += (pre == args.target).type(torch.float32).sum()
         accu += (pre == labels).type(torch.float32).sum()
     print('Classify Accuracy:{:.2f}, Target Success:{:.2f}'.format(accu / total * 100, succ / total * 100))
+
+
+def evaluate(epoch, patch, rxy=None):
+    net.eval()
+    total = 0
+    accu = 0.
+    succ = 0.
+
+    for batch_idx, (data, labels) in enumerate(train_loader):
+        if args.cuda:
+            data, labels = data.cuda(), labels.cuda()
+        rx, ry = InheritB(data.shape, patch, rxy=rxy)
+        total += data.shape[0]
+        for count in range(1):
+            patch.requires_grad = False
+            noise, mask = get_noise(patch, data.shape, rx, ry)
+            adv = torch.mul(data, mask) + torch.mul(noise, 1 - mask)
+            adv_out = F.softmax(net(adv), dim=1)
+        pre = torch.argmax(adv_out, dim=1)
+        succ += (pre == args.target).type(torch.float32).sum()
+        accu += (pre == labels).type(torch.float32).sum()
+    print('Epoch:{:3d}, Classify Accuracy:{:.2f}, Target Success:{:.2f}'.format(epoch, accu / total * 100, succ / total * 100))
+
 
 
 def evaluate_clean():

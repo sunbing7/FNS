@@ -109,7 +109,7 @@ class ResNet50(nn.Module):
         thre = torch.mean(torch.mean(a * norm, dim=2, keepdim=True), dim=3, keepdim=True)
         x = x / torch.clamp_min(norm, min=1e-7)
         mask = (norm > thre).float()
-        normd = thre * torch.exp(-1 / thre * (norm - thre) * math.log(dr))
+        normd = thre * torch.exp(-1 / thre / thre * (norm - thre) * (norm - thre) * math.log(dr))
         norm = norm * (1 - mask) + normd * mask
         x = x * norm
         return x
@@ -117,7 +117,7 @@ class ResNet50(nn.Module):
     def features(self, input):
         # self.heat1 = []
         # self.heat2 = []
-        # self.heat3 = []
+        # self.heat3 = []:q
         # self.heat4 = []
         #x = (input - self.mu) / self.std
         x = self.resnet.conv1(input)
@@ -211,7 +211,7 @@ class Vgg19(nn.Module):
         thre = torch.mean(torch.mean(a * norm, dim=2, keepdim=True), dim=3, keepdim=True)
         x = x / torch.clamp_min(norm, min=1e-7)
         mask = (norm > thre).float()
-        normd = thre * torch.exp(-1 / thre * (norm - thre) * math.log(dr))
+        normd = thre * torch.exp(-1 / thre / thre * (norm - thre) * (norm - thre) * math.log(dr))
         norm = norm * (1 - mask) + normd * mask
         x = x * norm
         return x
@@ -271,7 +271,7 @@ class GoogleNet(nn.Module):
         thre = torch.mean(torch.mean(a * norm, dim=2, keepdim=True), dim=3, keepdim=True)
         x = x / torch.clamp_min(norm, min=1e-7)
         mask = (norm > thre).float()
-        normd = thre * torch.exp(-1 / thre * (norm - thre) * math.log(dr))
+        normd = thre * torch.exp(-1 / thre / thre * (norm - thre) * (norm - thre) * math.log(dr))
         norm = norm * (1 - mask) + normd * mask
         x = x * norm
         return x
@@ -423,7 +423,7 @@ class Inception(nn.Module):
         thre = torch.mean(torch.mean(a * norm, dim=2, keepdim=True), dim=3, keepdim=True)
         x = x / torch.clamp_min(norm, min=1e-7)
         mask = (norm > thre).float()
-        normd = thre * torch.exp(-1 / thre * (norm - thre) * math.log(dr))
+        normd = thre * torch.exp(-1 / thre / thre * (norm - thre) * (norm - thre) * math.log(dr))
         norm = norm * (1 - mask) + normd * mask
         x = x * norm
         return x
@@ -593,7 +593,7 @@ class Squeeze(nn.Module):
 class Mobile(nn.Module):
     def __init__(self):
         super().__init__()
-        self.mobile = mobilenet_v2(pretrained=True, clamp=args.clp, dr=args.dr)
+        self.mobile = mobilenet_v2(pretrained=True, clamp=args.clp, dr=args.dr, gaussian=True)
 
     def features(self, input):
         # x = (input - self.mu) / self.std
@@ -1127,15 +1127,15 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)
     if is_best:
         if args.model_type == 0:
-            shutil.copyfile(filename, 'resnet50_exp_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))
+            shutil.copyfile(filename, 'resnet50_gaussian_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))
         elif args.model_type == 1:
-            shutil.copyfile(filename, 'incep_exp_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))
+            shutil.copyfile(filename, 'incep_gaussian_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))
         elif args.model_type == 2:
-            shutil.copyfile(filename, 'mobile_exp_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))
+            shutil.copyfile(filename, 'mobile_gaussian_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))
         elif args.model_type == 3:
-            shutil.copyfile(filename, 'vgg19_exp_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))
+            shutil.copyfile(filename, 'vgg19_gaussian_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))
         elif args.model_type == 4:
-            shutil.copyfile(filename, 'googlenet_exp_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))
+            shutil.copyfile(filename, 'googlenet_gaussian_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""

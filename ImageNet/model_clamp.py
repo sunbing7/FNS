@@ -699,3 +699,4 @@ class ResNet50(nn.Module):
 def resnet_50(**kwargs):
     model = ResNet50(**kwargs)
     return model
+
