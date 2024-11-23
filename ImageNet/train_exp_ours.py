@@ -22,6 +22,10 @@ import torchvision.models as models
 import torchvision
 import torch.nn.functional as F
 from model_clamp import densenet121, squeezenet1_1, mobilenet_v2
+from googlenet import googlenet
+from shufflenetv2 import ShuffleNetv2
+from data import *
+
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('data', metavar='DIR',
@@ -32,7 +36,7 @@ parser.add_argument('--epochs', default=90, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=256, type=int,
+parser.add_argument('-b', '--batch-size', default=32, type=int,
                     metavar='N',
                     help='mini-batch size (default: 256), this is the total '
                          'batch size of all GPUs on the current node when '
@@ -73,6 +77,9 @@ parser.add_argument('--clp', type=float, default=1.0, help='clip value')
 parser.add_argument('--model_type', type=int, default=0, help='type of trained model')
 parser.add_argument('--den', type=int, default=1, help='density of clipping')
 parser.add_argument('--dr', type=float, default=1.0)
+parser.add_argument('--dataset', default='imagenet',
+                    choices=['imagenet', 'caltech', 'asl', 'eurosat', 'cifar10'],
+                    help='Used dataset to generate UAP (default: imagenet)')
 args = parser.parse_args()
 
 
@@ -200,7 +207,7 @@ class Vgg19(nn.Module):
         def forward_hook_layer4(module, input, output):
             heat = torch.norm(output, dim=1)
             self.heat4.append(heat)
-        self.resnet.features.register_forward_hook(forward_hook_layer1)
+        self.vgg19.features.register_forward_hook(forward_hook_layer1)
         #self.resnet.layer2.register_forward_hook(forward_hook_layer2)
         #self.resnet.layer3.register_forward_hook(forward_hook_layer3)
         #self.resnet.layer4.register_forward_hook(forward_hook_layer4)
@@ -235,26 +242,176 @@ class Vgg19(nn.Module):
         # x = self.clamp(x)
         # x = self.resnet.layer4(x)
         # x = self.clamp(x)
-
+        x = input
         k = 1
-        for i in range(len(self.resnet.features)):
-            b = self.resnet.features[i]
+        for i in range(len(self.vgg19.features)):
+            b = self.vgg19.features[i]
             x = b(x)
             # x = self.clamp(x, 2.0 - i/(len(self.resnet.layer1)-1))
-            if k % args.den == 0:
+            if k == 28 or k == 37:
                 x = self.clamp(x, args.clp, args.dr)
             k += 1
         return x
 
     def logits(self, features):
-        x = self.resnet.avgpool(features)
-        x = self.resnet.classivier(x)
+        x = self.vgg19.avgpool(features)
+        x = x.view(x.size(0), -1)
+        x = self.vgg19.classifier(x)
         return x
 
     def forward(self, input):
+        #x = self.vgg19.features(input)
         x = self.my_features(input)
         x = self.logits(x)
         #x3 = self.logits3(x3)
+        return x
+
+
+class GoogleNet(nn.Module):
+    def __init__(self):
+        super(GoogleNet, self).__init__()
+        self.googlenet = googlenet(pretrained=True)
+
+    def clamp(self, x, a=1.0, dr=1.0):
+        norm = torch.norm(x, dim=1, keepdim=True)
+        thre = torch.mean(torch.mean(a * norm, dim=2, keepdim=True), dim=3, keepdim=True)
+        x = x / torch.clamp_min(norm, min=1e-7)
+        mask = (norm > thre).float()
+        normd = thre * torch.exp(-1 / thre * (norm - thre) * math.log(dr))
+        norm = norm * (1 - mask) + normd * mask
+        x = x * norm
+        return x
+
+    def forward_with_hook(self, input):
+        x = input
+        if self.googlenet.transform_input:
+            x_ch0 = torch.unsqueeze(x[:, 0], 1) * (0.229 / 0.5) + (0.485 - 0.5) / 0.5
+            x_ch1 = torch.unsqueeze(x[:, 1], 1) * (0.224 / 0.5) + (0.456 - 0.5) / 0.5
+            x_ch2 = torch.unsqueeze(x[:, 2], 1) * (0.225 / 0.5) + (0.406 - 0.5) / 0.5
+            x = torch.cat((x_ch0, x_ch1, x_ch2), 1)
+
+        # N x 3 x 224 x 224
+        x = self.googlenet.conv1(x)
+        # N x 64 x 112 x 112
+        x = self.googlenet.maxpool1(x)
+        # N x 64 x 56 x 56
+        x = self.googlenet.conv2(x)
+        # N x 64 x 56 x 56
+        x = self.googlenet.conv3(x)
+        # N x 192 x 56 x 56
+        x = self.googlenet.maxpool2(x)
+
+        # hook
+        x = self.clamp(x, args.clp, args.dr)
+
+        # N x 192 x 28 x 28
+        x = self.googlenet.inception3a(x)
+        # N x 256 x 28 x 28
+        x = self.googlenet.inception3b(x)
+        # N x 480 x 28 x 28
+        x = self.googlenet.maxpool3(x)
+
+        # hook
+        x = self.clamp(x, args.clp, args.dr)
+
+        # N x 480 x 14 x 14
+        x = self.googlenet.inception4a(x)
+        # N x 512 x 14 x 14
+        if self.googlenet.training and self.googlenet.aux_logits:
+            aux1 = self.googlenet.aux1(x)
+
+        x = self.googlenet.inception4b(x)
+        # N x 512 x 14 x 14
+        x = self.googlenet.inception4c(x)
+        # N x 512 x 14 x 14
+        x = self.googlenet.inception4d(x)
+        # N x 528 x 14 x 14
+        if self.googlenet.training and self.googlenet.aux_logits:
+            aux2 = self.googlenet.aux2(x)
+
+        x = self.googlenet.inception4e(x)
+        # N x 832 x 14 x 14
+        x = self.googlenet.maxpool4(x)
+
+        # hook
+        x = self.clamp(x, args.clp, args.dr)
+
+        # N x 832 x 7 x 7
+        x = self.googlenet.inception5a(x)
+        # N x 832 x 7 x 7
+        x = self.googlenet.inception5b(x)
+        # N x 1024 x 7 x 7
+
+        x = self.googlenet.avgpool(x)
+        # N x 1024 x 1 x 1
+        x = torch.flatten(x, 1)
+        # N x 1024
+        x = self.googlenet.dropout(x)
+        x = self.googlenet.fc(x)
+        return x
+
+    def forward_without_hook(self, input):
+        x = input
+        if self.googlenet.transform_input:
+            x_ch0 = torch.unsqueeze(x[:, 0], 1) * (0.229 / 0.5) + (0.485 - 0.5) / 0.5
+            x_ch1 = torch.unsqueeze(x[:, 1], 1) * (0.224 / 0.5) + (0.456 - 0.5) / 0.5
+            x_ch2 = torch.unsqueeze(x[:, 2], 1) * (0.225 / 0.5) + (0.406 - 0.5) / 0.5
+            x = torch.cat((x_ch0, x_ch1, x_ch2), 1)
+
+        # N x 3 x 224 x 224
+        x = self.googlenet.conv1(x)
+        # N x 64 x 112 x 112
+        x = self.googlenet.maxpool1(x)
+        # N x 64 x 56 x 56
+        x = self.googlenet.conv2(x)
+        # N x 64 x 56 x 56
+        x = self.googlenet.conv3(x)
+        # N x 192 x 56 x 56
+        x = self.googlenet.maxpool2(x)
+
+        # N x 192 x 28 x 28
+        x = self.googlenet.inception3a(x)
+        # N x 256 x 28 x 28
+        x = self.googlenet.inception3b(x)
+        # N x 480 x 28 x 28
+        x = self.googlenet.maxpool3(x)
+
+        # N x 480 x 14 x 14
+        x = self.googlenet.inception4a(x)
+        # N x 512 x 14 x 14
+        if self.googlenet.training and self.googlenet.aux_logits:
+            aux1 = self.googlenet.aux1(x)
+
+        x = self.googlenet.inception4b(x)
+        # N x 512 x 14 x 14
+        x = self.googlenet.inception4c(x)
+        # N x 512 x 14 x 14
+        x = self.googlenet.inception4d(x)
+        # N x 528 x 14 x 14
+        if self.googlenet.training and self.googlenet.aux_logits:
+            aux2 = self.googlenet.aux2(x)
+
+        x = self.googlenet.inception4e(x)
+        # N x 832 x 14 x 14
+        x = self.googlenet.maxpool4(x)
+
+        # N x 832 x 7 x 7
+        x = self.googlenet.inception5a(x)
+        # N x 832 x 7 x 7
+        x = self.googlenet.inception5b(x)
+        # N x 1024 x 7 x 7
+
+        x = self.googlenet.avgpool(x)
+        # N x 1024 x 1 x 1
+        x = torch.flatten(x, 1)
+        # N x 1024
+        x = self.googlenet.dropout(x)
+        x = self.googlenet.fc(x)
+        return x
+
+    def forward(self, input):
+        x = self.forward_with_hook(input)
+        #x = self.forward_without_hook(input)
         return x
 
 
@@ -726,6 +883,10 @@ def main_worker(gpu, ngpus_per_node, args):
         model = Mobile()
     elif args.model_type == 3:
         model = Vgg19()
+    elif args.model_type == 4:
+        model = GoogleNet()
+    elif args.model_type == 5:
+        model = ShuffleNetv2()
 
     if not torch.cuda.is_available():
         print('using CPU, this will be slow')
@@ -766,7 +927,15 @@ def main_worker(gpu, ngpus_per_node, args):
                                     momentum=args.momentum,
                                     weight_decay=args.weight_decay)
     elif args.model_type == 3:
-        optimizer = torch.optim.SGD(model.vgg19.classifier.parameters(), args.lr,
+        optimizer = torch.optim.SGD(model.module.vgg19.classifier.parameters(), args.lr,
+                                    momentum=args.momentum,
+                                    weight_decay=args.weight_decay)
+    elif args.model_type == 4:
+        optimizer = torch.optim.SGD(model.module.googlenet.fc.parameters(), args.lr,
+                                    momentum=args.momentum,
+                                    weight_decay=args.weight_decay)
+    elif args.model_type == 5:
+        optimizer = torch.optim.SGD(model.module.shufflenetv2.fc.parameters(), args.lr,
                                     momentum=args.momentum,
                                     weight_decay=args.weight_decay)
     else:
@@ -805,38 +974,59 @@ def main_worker(gpu, ngpus_per_node, args):
     cudnn.benchmark = True
 
     # Data loading code
-    traindir = os.path.join(args.data, 'train')
-    valdir = os.path.join(args.data, 'val')
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
+    if args.dataset == 'imagenet':
+        traindir = os.path.join(args.data, 'val')
+        valdir = os.path.join(args.data, 'test')
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                         std=[0.229, 0.224, 0.225])
 
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        transforms.Compose([
-            transforms.RandomResizedCrop(im_size),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize
-        ]))
+        train_dataset = datasets.ImageFolder(
+            traindir,
+            transforms.Compose([
+                transforms.RandomResizedCrop(im_size),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize
+            ]))
 
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+        if args.distributed:
+            train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+        else:
+            train_sampler = None
+
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
+            num_workers=args.workers, pin_memory=True, sampler=train_sampler)
+
+        val_loader = torch.utils.data.DataLoader(
+            datasets.ImageFolder(valdir, transforms.Compose([
+                transforms.Resize(int(im_size * 256 / 224)),
+                transforms.CenterCrop(im_size),
+                transforms.ToTensor(),
+                normalize
+            ])),
+            batch_size=int(args.batch_size/2), shuffle=False,
+            num_workers=args.workers, pin_memory=True)
     else:
-        train_sampler = None
+        _, data_test = get_data(args.dataset, args.dataset, is_attack=True)
 
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler)
+        val_loader = torch.utils.data.DataLoader(data_test,
+                                                 batch_size=args.batch_size,
+                                                 shuffle=False,
+                                                 num_workers=args.workers,
+                                                 pin_memory=True)
 
-    val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Resize(int(im_size * 256 / 224)),
-            transforms.CenterCrop(im_size),
-            transforms.ToTensor(),
-            normalize
-        ])),
-        batch_size=int(args.batch_size/2), shuffle=False,
-        num_workers=args.workers, pin_memory=True)
+        ##### Dataloader for training ####
+        num_classes, (mean, std), input_size, num_channels = get_data_specs(args.dataset)
+
+        data_train, _ = get_data(args.dataset, args.dataset, is_attack=True)
+
+        train_loader = torch.utils.data.DataLoader(data_train,
+                                                   batch_size=args.batch_size,
+                                                   shuffle=True,
+                                                   num_workers=args.workers,
+                                                   pin_memory=True)
+
 
     if args.evaluate:
         save_checkpoint({
@@ -845,6 +1035,7 @@ def main_worker(gpu, ngpus_per_node, args):
             'best_acc1': best_acc1,
             'optimizer': optimizer.state_dict(),
         }, True)
+        print('Model saved!')
         validate(val_loader, model, criterion, args)
         return
 
@@ -936,6 +1127,8 @@ def validate(val_loader, model, criterion, args):
     if 1:
         end = time.time()
         for i, (images, target) in enumerate(val_loader):
+            if i >= 10:
+                break
             if args.gpu is not None:
                 images = images.cuda(args.gpu, non_blocking=True)
             if torch.cuda.is_available():
@@ -972,10 +1165,14 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
             shutil.copyfile(filename, 'resnet50_exp_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))
         elif args.model_type == 1:
             shutil.copyfile(filename, 'incep_exp_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))
-        else:
+        elif args.model_type == 2:
             shutil.copyfile(filename, 'mobile_exp_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))
-
-
+        elif args.model_type == 3:
+            shutil.copyfile(filename, 'vgg19_exp_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))
+        elif args.model_type == 4:
+            shutil.copyfile(filename, 'googlenet_exp_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))
+        elif args.model_type == 5:
+            shutil.copyfile(filename, 'shufflenetv2_exp_clp{}_dr{}.pth.tar'.format(args.clp, args.dr))
 class AverageMeter(object):
     """Computes and stores the average and current value"""
     def __init__(self, name, fmt=':f'):
@@ -1043,4 +1240,5 @@ def accuracy(output, target, topk=(1,)):
 
 if __name__ == '__main__':
     main()
+
 

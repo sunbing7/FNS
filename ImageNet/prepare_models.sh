@@ -15,3 +15,9 @@ python train_exp.py /root/autodl-tmp/sunbing/workspace/uap/data/imagenet_sga/ --
 python train_gaussian_ours.py /root/autodl-tmp/sunbing/workspace/uap/data/imagenet_sga/ --model_type=4 --clp=1.13 --dr=2.0 --evaluate
 #cfn
 python train_exp.py /root/autodl-tmp/sunbing/workspace/uap/data/imagenet_sga/ --clp 1.1 --dr 1.0 --model 4 --evaluate
+
+#shufflenetv2
+#fns-g
+python train_gaussian_ours.py /root/autodl-tmp/sunbing/workspace/uap/data/imagenet_sga/ --model_type=4 --clp=1.13 --dr=2.0 --evaluate
+#cfn
+python train_exp.py --dataset=caltech /root/autodl-tmp/sunbing/workspace/uap/data/imagenet_sga/ --clp 1.1 --dr 1.0 --model 5 --evaluate
